@@ -1,5 +1,9 @@
 // main.ts — "The World in One Page": sums up the world news of Friday
 // 20 November 2026 in a single 1024x1024 newspaper-style image.
+// v2 (2026-11-21): reselected to the full 20 Nov UTC scope; small text
+// rendered at integer scale 1 so it stays crisp.
+// v3 (2026-11-21): NVDA seven-session price chart drawn in the lead.
+// v4 (2026-11-22): SGS layout review - no stranded headline words.
 //
 // Node 22, standard library only. The program draws every pixel itself
 // from an embedded 16px bitmap font (DejaVu Sans Bold, ASCII 32..126),
@@ -124,6 +128,44 @@ function drawLine(
   return yTop + lineHeight(scale);
 }
 
+// Bresenham line; thick draws a 2x2 block at each step.
+function plotLine(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  c: [number, number, number],
+  thick: number,
+): void {
+  const dx = Math.abs(x1 - x0);
+  const dy = -Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  let x = x0;
+  let y = y0;
+  for (;;) {
+    if (thick > 1) {
+      setPixel(x, y, c);
+      setPixel(x + 1, y, c);
+      setPixel(x, y + 1, c);
+      setPixel(x + 1, y + 1, c);
+    } else {
+      setPixel(x, y, c);
+    }
+    if (x === x1 && y === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) {
+      err += dy;
+      x += sx;
+    }
+    if (e2 <= dx) {
+      err += dx;
+      y += sy;
+    }
+  }
+}
+
 function wrapText(text: string, scale: number, width: number): string[] {
   const words = text.split(" ");
   const lines: string[] = [];
@@ -152,7 +194,7 @@ function fitText(
   while (scale >= minScale) {
     const lines = wrapText(text, scale, width);
     if (lines.length <= maxLines) return { scale, lines };
-    scale = Math.round((scale - 0.125) * 1000) / 1000;
+    scale = Math.round((scale - 0.25) * 1000) / 1000;
   }
   return { scale: minScale, lines: wrapText(text, minScale, width).slice(0, maxLines) };
 }
@@ -173,6 +215,40 @@ function drawLines(
   return y;
 }
 
+
+// NVDA daily closes, 12-20 Nov 2026: seven straight down days.
+const NVDA_CLOSES = [166.19, 162.85, 156.14, 155.46, 150.96, 145.98, 125.53];
+
+// NVDA seven-session slide: title, red polyline, endpoint caption.
+// Returns the height used.
+function drawNvdaChart(x: number, yTop: number, w: number): number {
+  drawText("NVDA - SEVEN DOWN DAYS", x, yTop + 13, 1, RED);
+  const plotY = yTop + 22;
+  const plotH = 56;
+  const max = Math.max(...NVDA_CLOSES);
+  const min = Math.min(...NVDA_CLOSES);
+  const n = NVDA_CLOSES.length;
+  const px: number[] = [];
+  const py: number[] = [];
+  for (let i = 0; i < n; i++) {
+    px.push(x + Math.round((i * (w - 1)) / (n - 1)));
+    py.push(plotY + Math.round(((max - NVDA_CLOSES[i]) / (max - min)) * (plotH - 1)));
+  }
+  for (let xx = 0; xx < w; xx++) {
+    const t = (xx / (w - 1)) * (n - 1);
+    const i0 = Math.min(Math.floor(t), n - 2);
+    const f = t - i0;
+    const yy = Math.round(py[i0] + (py[i0 + 1] - py[i0]) * f);
+    fillRect(x + xx, yy, 1, plotY + plotH - yy, LIGHT);
+  }
+  for (let i = 0; i < n - 1; i++) plotLine(px[i], py[i], px[i + 1], py[i + 1], RED, 3);
+  fillRect(px[0] - 1, py[0] - 1, 3, 3, RED);
+  fillRect(px[n - 1] - 1, py[n - 1] - 1, 3, 3, RED);
+  fillRect(x, plotY + plotH, w, 1, GRAY);
+  drawText("166.19 -> 125.53  (-24.5%)", x, plotY + plotH + 3 + 13, 1, INK);
+  return 22 + plotH + 3 + 20;
+}
+
 function rule(x: number, y: number, width: number, height = 1, c = RULE): void {
   fillRect(x, y, width, height, c);
 }
@@ -182,51 +258,51 @@ type Story = { kicker: string; head: string; summary: string };
 const STORIES: Story[] = [
   {
     kicker: "MARKETS - NEW YORK",
-    head: "Anthropic lists on Nasdaq and closes 17% higher",
+    head: "Nvidia plunges 14% as SEC probes its books",
     summary:
-      "The first frontier AI lab to go public raises $81.3 billion; shares open at $111.50 and close at $97.17.",
+      "Seventh straight loss to $125.53; the S&P 500 and Dow enter correction as the Nasdaq turns negative for the year.",
   },
   {
     kicker: "MARKETS - NEW YORK",
-    head: "Nvidia slides a sixth day as US stocks sink",
+    head: "Anthropic falls 8.5% in second day of trading",
     summary:
-      "The S&P 500 falls 2.02% for a sixth straight loss; the Dow drops below 50,000.",
+      "Shares fall 8.5% to $88.91, near the $83 offer price; greenshoe fully exercised.",
+  },
+  {
+    kicker: "AI - BEIJING",
+    head: "DeepSeek closes $15B round, eyes Shanghai listing",
+    summary:
+      "China's biggest AI round, at $89B; Tencent and CATL funds anchor the deal.",
   },
   {
     kicker: "JUSTICE - THE HAGUE",
-    head: "World court: Myanmar committed genocide",
+    head: "Myanmar guilty of genocide, world court rules",
     summary:
-      "The ICJ rules Myanmar's forces committed genocide against the Rohingya - a first for a state.",
+      "The first time the ICJ has found a state guilty of genocide; reparations ordered.",
   },
   {
-    kicker: "MIDDLE EAST - RIYADH",
-    head: "Houthi missile hits Riyadh's tallest tower",
+    kicker: "AI - BERKELEY",
+    head: "AI agents now do 27-hour tasks, but can't judge them",
     summary:
-      "The strike blows out windows across eight floors of the Saudi sovereign wealth fund tower.",
+      "METR: time horizons double every 110 days; no model produced a usable test design.",
+  },
+  {
+    kicker: "DEALS - NEW YORK",
+    head: "SpaceX prices $44B GPU debt, the largest ever",
+    summary:
+      "Oversubscribed deal funds Vera Rubin chips; senior notes yield 8.259%.",
+  },
+  {
+    kicker: "POLICY - WASHINGTON",
+    head: "Senate passes bill; data centers pay own grid costs",
+    summary:
+      "The 62-33 vote rewrites project approvals; the House fate is uncertain.",
   },
   {
     kicker: "EUROPE - KYIV",
-    head: "Russian barrage hits Kyiv embassies and cathedral",
+    head: "Overnight barrage kills 8, damages Kyiv bridges",
     summary:
-      "A daytime attack damages the Austrian and Dutch missions; Brussels summons Moscow's envoy.",
-  },
-  {
-    kicker: "UNITED STATES - WASHINGTON",
-    head: "Trump fires White House cyber chief",
-    summary:
-      "The dismissal follows a wave of tech outages rattling US government systems.",
-  },
-  {
-    kicker: "TECH POLICY - WASHINGTON",
-    head: "US curbs remote access to advanced AI chips",
-    summary:
-      "A new BIS rule takes effect: remote computing above 12M TPP needs a licence, with 90 days to comply.",
-  },
-  {
-    kicker: "AI - MOUNTAIN VIEW",
-    head: "Gemini 4 Neon tops independent AI benchmarks",
-    summary:
-      "Google's Neon leads a 35-model business test; Genie 4 opens to Ultra subscribers.",
+      "400 drones and 110 missiles hit power and rail; three Dnipro bridges damaged.",
   },
 ];
 
@@ -255,7 +331,7 @@ function drawPage(): void {
 
   // Subline
   const sub = "Eight stories that defined the day";
-  const subScale = 1.0625;
+  const subScale = 1;
   const subW = textWidth(sub, subScale);
   drawText(sub, Math.round((W - subW) / 2), y + Math.round(13 * subScale), subScale, GRAY);
   y += lineHeight(subScale) + 8;
@@ -266,10 +342,14 @@ function drawPage(): void {
   const lead = STORIES[0];
   y = drawLine(lead.kicker, M, y, 1, RED);
   y += 2;
-  const headFit = fitText(lead.head, CW, 2, 2.375, 1.75);
+  const headFit = fitText(lead.head, CW, 2, 2.25, 1.5);
   y = drawLines(headFit.lines, M, y, headFit.scale, INK);
   y += 2;
-  y = drawLines(wrapText(lead.summary, 1.25, CW), M, y, 1.25, INK);
+  const chartW = 288;
+  const sumW = CW - chartW - 24;
+  const sumEnd = drawLines(wrapText(lead.summary, 1, sumW), M, y, 1, INK);
+  const chartH = drawNvdaChart(M + sumW + 24, y, chartW);
+  y = Math.max(sumEnd, y + chartH);
   y += 8;
   rule(M, y, CW, 2, INK);
   y += 12;
@@ -290,31 +370,31 @@ function drawPage(): void {
       const x = M + c * (colW + gap);
       const st = rows[r][c];
       if (st === null) {
-        fillRect(x, top, colW, rowH - 12, LIGHT);
+        fillRect(x, top, colW, 104, LIGHT);
         const bx = x + 14;
         let by = drawLine("MARKETS AT THE CLOSE", bx, top + 12, 1, RED);
         by += 2;
         drawLines(
           [
-            "S&P 500  -2.02%    Dow  -2.19%",
-            "Nasdaq  -2.25%    ANT  +17.07%",
-            "NVDA  -3.30%    Gold  -4.90%",
+            "S&P 500  -3.70%    Dow  -1.93%",
+            "Nasdaq  -5.28%    ANT  -8.50%",
+            "NVDA  -14.01%    VIX  +26%",
           ],
           bx,
           by,
-          1.0625,
+          1,
           INK,
-          Math.round(16 * 1.0625 * 1.35),
+          Math.round(16 * 1 * 1.35),
         );
         continue;
       }
       let yy = drawLine(st.kicker, x, top, 1, RED);
       yy += 2;
-      const hf = fitText(st.head, colW, 3, 1.5, 1.1875);
-      yy = drawLines(hf.lines, x, yy, hf.scale, INK);
+      const hf = fitText(st.head, colW, 3, 1.5, 1);
+      yy = drawLines(hf.lines, x, yy, hf.scale, INK, 32);
       yy += 1;
-      const slines = wrapText(st.summary, 1.0625, colW).slice(0, 3);
-      drawLines(slines, x, yy, 1.0625, INK, Math.round(16 * 1.0625 * 1.2));
+      const slines = wrapText(st.summary, 1, colW).slice(0, 3);
+      drawLines(slines, x, yy, 1, INK, Math.round(16 * 1 * 1.375));
     }
     if (r < 3) rule(M, top + rowH, CW);
     y = top + rowH + (r < 3 ? 8 : 0);
